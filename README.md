@@ -6,3 +6,5 @@ Code for the paper: Additive Manufacturing Source Identification from Photograph
 Disclaimer: This repo is not plug-and-play and will take some modifications of file paths to run.
 
 The data for the 21 machine model can be found on [Kaggle](https://www.kaggle.com/datasets/milesbimrose/additive-manufacturing-source-identification-uiuc)
+
+[Dataset citation](https://doi.org/10.34740/kaggle/dsv/10072431)
