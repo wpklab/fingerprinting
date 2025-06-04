@@ -1,38 +1,20 @@
 import torch_optimizer as optim
 
 import os
-import pdb
-import time
 import numpy as np
 import gc
-import pandas as pd
-import typing as t
-import random
 
-import matplotlib.pyplot as plt
 import torch
 #import torch.optim as optim
-import torchvision
 from torch import nn
 from torchvision import datasets, transforms
 import ml_models
 
-# from S3N import MultiSmoothLoss
 
-from typing import Any, Callable, cast, Dict, List, Optional, Tuple, Union
-
-from PIL import Image
-
-## Testing out Weights and Biases
-import wandb
 from joblib.externals.loky.backend.context import get_context
 
 import torch
 import torchvision.transforms as transforms
-import PIL.Image as Image
-from matplotlib import pyplot as plt
-
-os.environ["WANDB__SERVICE_WAIT"] = "300"
 
 class random_crop_tensor(torch.nn.Module):
     def __init__(self, scale, scale_2=1):
@@ -48,7 +30,7 @@ class random_crop_tensor(torch.nn.Module):
         img = transforms.ToTensor()(img)
         img_num = 0
         while True:
-            img_resize = transforms.Resize((int(img_h/self.scale), int(img_w/self.scale)))(img)
+            img_resize = transforms.Resize((int(img_h/self.scale), int(img_w/self.scale)), antialias=True)(img)
 
             _, img_resize_w, img_resize_h = img_resize.size()
 
@@ -70,7 +52,7 @@ class random_crop_tensor(torch.nn.Module):
 
             if self.scale_2 != 1:
                 img_crop = transforms.RandomCrop(int(448/self.scale_2))(img_crop)
-                img_crop = transforms.Resize(448)(img_crop)
+                img_crop = transforms.Resize(448, antialias=True)(img_crop)
 
 
             if (self.scale >= 8) & (self.scale_2 <= 4):
@@ -107,9 +89,8 @@ class random_crop_tensor_test(torch.nn.Module):
             img_num = 0
 
             while True:
-                img_resize = transforms.Resize((int(img_h/self.scale), int(img_w/self.scale)))(img)
+                img_resize = transforms.Resize((int(img_h/self.scale), int(img_w/self.scale)), antialias=True)(img)
 
-                
                 _, img_resize_w, img_resize_h = img_resize.size()
 
                 img_w_pad = 0
@@ -131,7 +112,7 @@ class random_crop_tensor_test(torch.nn.Module):
                 #Optional Recrop
                 if self.scale_2 != 1:
                     img_crop = transforms.RandomCrop(int(448/self.scale_2))(img_crop)
-                    img_crop = transforms.Resize(448)(img_crop)
+                    img_crop = transforms.Resize(448, antialias=True)(img_crop)
 
 
                 if (self.scale >= 8) & (self.scale_2 <= 4):
@@ -154,32 +135,28 @@ class random_crop_tensor_test(torch.nn.Module):
 
 
 def run_model():
-    data_dir = 'data'
 
     gc.collect()
     torch.cuda.empty_cache()
 
     try:
-        wandb.init()
-        data_dir = 'data'
-        main_dir = 'data'
 
         device1 = torch.device("cuda") 
         device_id = 0
-        #device1 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        lr = wandb.config.lr #0.0005
-        model_name  = wandb.config.model_name
-        # wandb.log({'model_name': model_name})
-        freeze_layers = False #wandb.config.freeze_layers
+        lr = 0.0005
+        model_name = 'efficientnetv2_m'
+        freeze_layers = False
         img_size = 448
-        weight_decay = wandb.config.weight_decay #0.0001
-        scale = wandb.config.scale
-        scale_2 = wandb.config.scale_2
-        test_samples = wandb.config.test_samples
-        lr_gamma = wandb.config.lr_gamma #0.99
+        weight_decay = 0.0001
+        scale = 2
+        scale_2 = 1
+        test_samples = 8
+        lr_gamma = 0.99
+        
+        main_dir = ''
 
-        dataset_name = wandb.config.dataset_name
+        dataset_name = 'printer_21_efficiency_10'
         num_models = 1
         num_workers = 8###Change this based on configuration
 
@@ -207,22 +184,20 @@ def run_model():
 
             print("Initializing Datasets and Dataloaders...")
 
-            model_path = 'data/Models/'+ str(c) + '_' + wandb.run.id + '.pth'
+            model_path = str(c) + '.pth'
 
-            ssd_dir = 'data/'+ str(c)
+            ssd_dir = str(c)
 
             image_datasets = {x: datasets.ImageFolder(os.path.join(ssd_dir, x), data_transforms[x]) for x in ['train', 'val']}
 
             class_names = ['4200-1', '5200-1', '5200-2', 'F3B-1', 'F3B-2', 'F3B-3', 'F3B-4', 'F3B-5', 'F3B-6', 'L1-1', 'L1-2', 'M2-1', 'M2-2', 'M2-3', 'M2-4', 'M2-5', 'M2-6', 'S450-1', 'S450-2', 'S900-1', 'S900-2']
-
+            
             class_names = np.array(class_names)
             print(class_names)
 
             batch_size = int(16)
 
             print('Batch Size: ', batch_size)
-
-            wandb.log({'batch_size' : batch_size})
 
             gc.collect()
             torch.cuda.empty_cache()
@@ -250,11 +225,11 @@ def run_model():
             criterion = nn.CrossEntropyLoss()
 
             # Train the model
-            model, acc, trainloss, pred_ids, ground_truth_ids, best_val_loss, best_val_acc = ml_models.train_model(model, model_name, dataloaders_dict, image_datasets, criterion, optimizer_ft, batch_size, class_names, main_dir, test_samples, device1, scheduler, num_epochs=num_epochs, jigsaw=jigsaw)
+            model, acc, trainloss, pred_ids, ground_truth_ids, best_val_loss, best_val_acc = ml_models.train_model(model, model_name, dataloaders_dict, image_datasets, criterion, optimizer_ft, batch_size, class_names, main_dir, test_samples, device1, scheduler, num_epochs=num_epochs, jigsaw=False)
             torch.save(model.state_dict(), model_path)
 
             # Print results
-            results_save_dir = 'data/Results/'+ str(c) + '.txt'
+            results_save_dir = str(c) + '.txt'
             file_result =  open(results_save_dir, 'w')
             print('loss: ', file=file_result)
             print(trainloss, file=file_result)
@@ -265,37 +240,30 @@ def run_model():
             file_result.close()
 
             # log metrics to wandb
-            wandb.log({'max_acc': best_val_acc})
-            wandb.log({'min_val_loss': best_val_loss})
 
-            wandb.finish()
-    except RuntimeError:
-            run_id = wandb.run.id
-            wandb.finish()
+    except RuntimeError as e:
+        print(e)
+        model = 0
 
-            api = wandb.Api()
-            run = api.run("wpklab/connector_fgc/" + run_id)
-            run.delete()
-
-            model = 0
-
-            gc.collect()
-            torch.cuda.empty_cache()
+        gc.collect()
+        torch.cuda.empty_cache()
 
 import joblib
 import wandb
 
 def run_agent():
     wandb.agent(sweep_id="connector_fgc/0drrc7rz", function=run_model)
+    
 
 if __name__ == '__main__':
-    num_agents = 2  # Specify the number of agents you want to run
+    num_agents = 1  # Specify the number of agents you want to run
 
+    run_model()
     # run_agent()
     # Use joblib to run multiple agents in parallel
-    joblib.Parallel(n_jobs=num_agents)(
-        joblib.delayed(run_agent)() for _ in range(num_agents)
-    )
+    # joblib.Parallel(n_jobs=num_agents)(
+    #     joblib.delayed(run_agent)() for _ in range(num_agents)
+    # )
     
 ## Example Sweep Configuration:
 # import wandb

@@ -1,22 +1,14 @@
-import copy # someone on stack overflow says copy is built into python, and thus requires no installation.
+import copy
 import os
-import shutil # fine
-import time # fine
-from PIL import Image # seems fine
-import wandb
+import time
 import pandas as pd
-import random
 
 import torch
 import torch.nn as nn
-import torchvision
 from torchvision import models
-from torchvision import transforms
 import numpy as np
 
 import timm
-
-from collections import Counter
 
 # Set the device
 #device1 = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
@@ -591,7 +583,7 @@ def initialize_model(model_name, num_classes, feature_extract, use_pretrained=Tr
     return model_ft, input_size
 
 # To train the model
-def train_model(model, model_name, dataloaders, image_datasets, criterion, optimizer, batch_size, class_names, data_dir, test_samples, device1, scheduler, num_epochs, jigsaw=False, log_interval=20):
+def train_model(model, model_name, dataloaders, image_datasets, criterion, optimizer, batch_size, class_names, data_dir, test_samples, device1, scheduler, num_epochs, jigsaw=False, log_interval=1):
     
     model.to(device1)
 
@@ -631,7 +623,7 @@ def train_model(model, model_name, dataloaders, image_datasets, criterion, optim
                     batch_id * batch_size,
                     len(dataloaders['train'].dataset),
                     100. * batch_id / len(dataloaders['train']),
-                    running_loss / (batch_id * batch_size + 1),
+                    running_loss / ((batch_id + 1) * batch_size),
                     int(running_corrects),
                     batch_id * batch_size
                 ))
@@ -654,10 +646,10 @@ def train_model(model, model_name, dataloaders, image_datasets, criterion, optim
                 pred_array_best = pred_array_final
                 label_array_best = label_array_final
 
-                wandb.log({'max_acc': best_acc})
+                # wandb.log({'max_acc': best_acc})
 
-                wandb.log({"conf_mat_" : wandb.plot.confusion_matrix( 
-                    preds=np.array(pred_array_final.cpu()), y_true=np.array(label_array_final.cpu()), class_names=np.array(class_names))})
+                # wandb.log({"conf_mat_" : wandb.plot.confusion_matrix( 
+                #     preds=np.array(pred_array_final.cpu()), y_true=np.array(label_array_final.cpu()), class_names=np.array(class_names))})
 
                 df = pd.DataFrame(columns=['img', 'label', 'pred'])
                 df.img = (np.array(image_datasets['val'].imgs)[:, 0])
@@ -665,13 +657,13 @@ def train_model(model, model_name, dataloaders, image_datasets, criterion, optim
                 df.pred = pred_array_best.cpu()
                 df.label = label_array_best.cpu()
                 print('Outputting csv file')
-                pd.DataFrame(df).to_csv(data_dir + "/csv_outputs/" + wandb.run.name +'_'+ wandb.run.id + ".csv")
+                pd.DataFrame(df).to_csv(data_dir + "csv_outputs.csv")
                 print('Outputting csv file complete')
 
             print("{} Loss: {} Acc: {}".format(phase, epoch_loss, epoch_acc))
             print()
 
-            wandb.log({'epoch_train': epoch, 'train acc': epoch_acc, 'train loss': epoch_loss, 'val acc': val_acc, 'val loss': val_loss})
+            # wandb.log({'epoch_train': epoch, 'train acc': epoch_acc, 'train loss': epoch_loss, 'val acc': val_acc, 'val loss': val_loss})
 
     time_elapsed = time.time() - since
     print("Training compete in {}m   {}s".format(time_elapsed // 60, time_elapsed % 60))
@@ -723,6 +715,20 @@ def test_model(model, model_name, dataloaders, image_datasets, criterion, epoch,
                 
         _, preds = torch.max(outputs, 1)
         running_loss += loss.item() * (inputs.size(0) / test_samples)
+        
+        running_corrects += int(torch.sum(preds.view(-1) == labels.view(-1)).detach().cpu().numpy()) // test_samples
+        
+        if batch_id % 5 == 0: #Remove log interval
+            samples_processed = (batch_id + 1) * (inputs.size(0) // test_samples)
+            print("Test Epoch: {} [{}/{} ({:.1f}%)]\tLoss: {:.6f}\tPatch Acc: {}/{}".format(
+                epoch,
+                samples_processed,
+                len(dataloaders['val'].dataset),
+                100. * samples_processed / len(dataloaders['val'].dataset),
+                running_loss / samples_processed,
+                int(running_corrects),
+                samples_processed
+            ))
 
         pred_array = torch.cat((pred_array, preds.view(-1)), 0)
         label_array = torch.cat((label_array, labels.view(-1)), 0)
@@ -749,7 +755,7 @@ def test_model(model, model_name, dataloaders, image_datasets, criterion, epoch,
     epoch_acc = (running_corrects) / len(dataloaders['val'].dataset)
     print('Full Part Accuracy: {}'.format(epoch_acc))
 
-    wandb.log({'full_acc': epoch_acc})
+    # wandb.log({'full_acc': epoch_acc})
 
     time_elapsed = time.time() - since
     print("Training compete in {}m   {}s".format(time_elapsed // 60, time_elapsed % 60))
