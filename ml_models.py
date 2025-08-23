@@ -686,7 +686,8 @@ def train_model(model, model_name, dataloaders, image_datasets, criterion, optim
 
         scheduler.step()
 
-        # Validation every 10 epochs or on final epoch
+        # Validation every 10 epochs or on final epoch to save computation time
+        # More frequent validation isn't needed as training is stable
         if (epoch % 10 == 0) | (epoch == num_epochs-1):
             val_loss, val_acc, pred_array_final, label_array_final = test_model(
                 model, model_name, dataloaders, image_datasets, criterion, epoch, 
@@ -805,7 +806,7 @@ def test_model(model, model_name, dataloaders, image_datasets, criterion, epoch,
         running_loss += loss.item() * (inputs.size(0) / test_samples)
         running_corrects += int(torch.sum(preds.view(-1) == labels.view(-1)).detach().cpu().numpy()) // test_samples
 
-        # Log progress every 5 batches
+        # Log progress every 5 batches to monitor progress without overwhelming output
         if batch_id % 5 == 0:
             samples_processed = (batch_id + 1) * (inputs.size(0) // test_samples)
             print("Test Epoch: {} [{}/{} ({:.1f}%)]\tLoss: {:.6f}\tPatch Acc: {}/{}".format(

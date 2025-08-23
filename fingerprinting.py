@@ -80,11 +80,17 @@ class random_crop_tensor(torch.nn.Module):
                 img_crop = transforms.Resize(448, antialias=True)(img_crop)
 
             # Check image brightness to avoid mostly black images
-            # Different thresholds based on scale factors
-            brightness_threshold = 0.05 if (self.scale >= 8 and self.scale_2 <= 4) or self.scale_2 > 64 else 0.1
-            adaptive_threshold = brightness_threshold / ((img_num // (10 if self.scale >= 8 and self.scale_2 <= 4 else 20)) + 1)
+            # Different thresholds based on scale factors to ensure adequate image content
+            if (self.scale >= 8 and self.scale_2 <= 4) or self.scale_2 > 64:
+                # More lenient threshold for high scale factors (0.05)
+                # Adaptive threshold decreases every 10 attempts to prevent infinite loops
+                brightness_threshold = 0.05 / ((img_num // 10) + 1)
+            else:
+                # Standard threshold for normal scale factors (0.1)
+                # Adaptive threshold decreases every 20 attempts
+                brightness_threshold = 0.1 / ((img_num // 20) + 1)
             
-            if img_crop.mean() > adaptive_threshold:
+            if img_crop.mean() > brightness_threshold:
                 return img_crop
                 
             img_num += 1
@@ -152,10 +158,17 @@ class random_crop_tensor_test(torch.nn.Module):
                     img_crop = transforms.Resize(448, antialias=True)(img_crop)
 
                 # Check image brightness to avoid mostly black images
-                brightness_threshold = 0.05 if (self.scale >= 8 and self.scale_2 <= 4) or self.scale_2 >= 64 else 0.1
-                adaptive_threshold = brightness_threshold / ((img_num // (10 if self.scale >= 8 and self.scale_2 <= 4 else 20)) + 1)
+                # Different thresholds based on scale factors to ensure adequate image content
+                if (self.scale >= 8 and self.scale_2 <= 4) or self.scale_2 >= 64:
+                    # More lenient threshold for high scale factors (0.05)
+                    # Adaptive threshold decreases every 10 attempts to prevent infinite loops
+                    brightness_threshold = 0.05 / ((img_num // 10) + 1)
+                else:
+                    # Standard threshold for normal scale factors (0.1)
+                    # Adaptive threshold decreases every 20 attempts
+                    brightness_threshold = 0.1 / ((img_num // 20) + 1)
                 
-                if img_crop.mean() > adaptive_threshold:
+                if img_crop.mean() > brightness_threshold:
                     x[idx, :, :, :] = torch.Tensor(img_crop)
                     break
 
@@ -180,31 +193,32 @@ def run_model():
         device1 = torch.device("cuda") 
         device_id = 0
         
-        # Hyperparameters
-        lr = 0.0005  # Learning rate
-        model_name = 'efficientnetv2_m'  # Neural network architecture
-        freeze_layers = False  # Whether to freeze pretrained layers
-        img_size = 448  # Input image size
-        weight_decay = 0.0001  # L2 regularization parameter
-        scale = 2  # Image scaling factor for data augmentation
-        scale_2 = 1  # Secondary scaling factor
-        test_samples = 8  # Number of crops per validation image
-        lr_gamma = 0.99  # Learning rate decay factor
+        # Hyperparameters - these values are optimized for the fingerprinting task
+        lr = 0.0005  # Learning rate - balanced for stable convergence
+        model_name = 'efficientnetv2_m'  # Neural network architecture - medium size EfficientNet v2
+        freeze_layers = False  # Whether to freeze pretrained layers - False allows full fine-tuning
+        img_size = 448  # Input image size - larger than typical 224 for better detail capture
+        weight_decay = 0.0001  # L2 regularization parameter - light regularization
+        scale = 2  # Image scaling factor for data augmentation - 2x downsampling
+        scale_2 = 1  # Secondary scaling factor - no additional scaling
+        test_samples = 8  # Number of crops per validation image - more crops = more robust evaluation
+        lr_gamma = 0.99  # Learning rate decay factor - slow decay rate
         
         main_dir = ''  # Base directory for data
 
         # Dataset configuration
-        dataset_name = 'printer_21_efficiency_10'
+        dataset_name = 'printer_21_efficiency_10'  # Dataset containing 21 different 3D printers
         num_models = 1
-        num_workers = 8  # Number of data loading workers (adjust based on system)
+        num_workers = 8  # Number of data loading workers - adjust based on CPU cores available
 
-        num_epochs = 200  # Maximum training epochs
-        feature_extract = True  # Use pretrained features
+        num_epochs = 200  # Maximum training epochs - may stop early if no improvement
+        feature_extract = True  # Use pretrained features - leverages ImageNet knowledge
 
         for c in [dataset_name]:
-            # Normalization parameters calculated from training data
-            mean = [0.0895, 0.0895, 0.0895]  # RGB channel means
-            std = [0.1101, 0.1101, 0.1101]   # RGB channel standard deviations
+            # Normalization parameters calculated from training data statistics
+            # These values are specific to the 3D printer dataset and differ from ImageNet norms
+            mean = [0.0895, 0.0895, 0.0895]  # RGB channel means - images are quite dark overall
+            std = [0.1101, 0.1101, 0.1101]   # RGB channel standard deviations - relatively low variance
 
             # Data transformations for training and validation
             data_transforms = {
@@ -236,27 +250,27 @@ def run_model():
             class_names = np.array(class_names)
             print(class_names)
 
-            batch_size = int(16)  # Training batch size
+            batch_size = int(16)  # Training batch size - balanced for GPU memory and convergence
             print('Batch Size: ', batch_size)
 
-            # Clear memory before creating data loaders
+            # Clear memory before creating data loaders to prevent OOM errors
             gc.collect()
             torch.cuda.empty_cache()
 
-            # Create data loaders with multiprocessing
+            # Create data loaders with multiprocessing for efficient data loading
             dataloaders_dict = {
                 'train': torch.utils.data.DataLoader(
                     image_datasets['train'], 
                     batch_size=batch_size, 
-                    shuffle=True, 
+                    shuffle=True,  # Shuffle training data for better generalization
                     num_workers=num_workers, 
-                    pin_memory=True, 
-                    multiprocessing_context=get_context('loky')
+                    pin_memory=True,  # Faster GPU transfer
+                    multiprocessing_context=get_context('loky')  # Robust multiprocessing
                 ),
                 'val': torch.utils.data.DataLoader(
                     image_datasets['val'], 
-                    batch_size=int(batch_size/test_samples),  # Smaller batch size for validation due to multiple crops
-                    shuffle=False, 
+                    batch_size=int(batch_size/test_samples),  # Smaller batch size due to multiple crops per image
+                    shuffle=False,  # No shuffling needed for validation
                     num_workers=num_workers, 
                     pin_memory=True, 
                     multiprocessing_context=get_context('loky')
