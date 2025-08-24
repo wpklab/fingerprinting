@@ -1,3 +1,12 @@
+"""
+Machine Learning Models for 3D Printer Fingerprinting
+
+This module contains functions for initializing various deep learning models,
+training them for 3D printer identification, and testing their performance.
+Supports multiple architectures including ResNet, EfficientNet, Vision Transformers,
+and other modern neural networks.
+"""
+
 import copy
 import os
 import time
@@ -7,19 +16,21 @@ import torch
 import torch.nn as nn
 from torchvision import models
 import numpy as np
-
 import timm
 
-# Set the device
-#device1 = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
-#device1 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-#print(device1)
+# Configure model cache directories
 torch.hub.set_dir('data/Models')
-
 os.environ["HUGGINGFACE_HUB_CACHE"] = "data/Models"
 
 def set_parameter_requires_grad(model, feature_extracting, freeze_layers):
+    """
+    Configure which model parameters require gradients during training.
+    
+    Args:
+        model: PyTorch model
+        feature_extracting: Whether to extract features (not used in current implementation)
+        freeze_layers: If True, freeze all parameters; if False, allow all to be trained
+    """
     if freeze_layers:
         for param in model.parameters():
             param.requires_grad = False
@@ -27,8 +38,26 @@ def set_parameter_requires_grad(model, feature_extracting, freeze_layers):
         for param in model.parameters():
             param.requires_grad = True
 
-# To initialize the model
+
 def initialize_model(model_name, num_classes, feature_extract, use_pretrained=True, freeze_layers=True, classifier_layer_config=0, input_size=224):
+    """
+    Initialize a deep learning model for 3D printer fingerprinting.
+    
+    This function supports multiple model architectures and configures them
+    for the specific task of printer identification.
+    
+    Args:
+        model_name (str): Name of the model architecture to use
+        num_classes (int): Number of printer classes to classify
+        feature_extract (bool): Whether to use feature extraction mode
+        use_pretrained (bool): Whether to use pretrained weights
+        freeze_layers (bool): Whether to freeze backbone layers
+        classifier_layer_config (int): Configuration for classifier layers (0, 1, or custom)
+        input_size (int): Input image size (default: 224, but 448 is used in practice)
+        
+    Returns:
+        tuple: (model, input_size) - The initialized model and input size
+    """
     if model_name == "resnet18":
         model_ft = models.resnet18(weights='DEFAULT')
     if model_name == "resnet34":
@@ -582,9 +611,35 @@ def initialize_model(model_name, num_classes, feature_extract, use_pretrained=Tr
 
     return model_ft, input_size
 
-# To train the model
 def train_model(model, model_name, dataloaders, image_datasets, criterion, optimizer, batch_size, class_names, data_dir, test_samples, device1, scheduler, num_epochs, jigsaw=False, log_interval=1):
+    """
+    Train a deep learning model for 3D printer fingerprinting.
     
+    This function implements the main training loop with validation, model checkpointing,
+    and performance tracking. It trains the model to classify 3D printed objects by
+    their source printer.
+    
+    Args:
+        model: PyTorch model to train
+        model_name (str): Name of the model architecture
+        dataloaders (dict): Dictionary containing 'train' and 'val' data loaders
+        image_datasets (dict): Dictionary containing image datasets
+        criterion: Loss function for training
+        optimizer: Optimizer for parameter updates
+        batch_size (int): Training batch size
+        class_names (list): List of printer class names
+        data_dir (str): Directory for saving outputs
+        test_samples (int): Number of crops per validation image
+        device1: PyTorch device (GPU/CPU)
+        scheduler: Learning rate scheduler
+        num_epochs (int): Maximum number of training epochs
+        jigsaw (bool): Whether to use jigsaw puzzle augmentation (unused)
+        log_interval (int): Interval for logging training progress
+        
+    Returns:
+        tuple: (model, val_acc_history, train_loss_history, pred_array_best, 
+                label_array_best, best_loss, best_acc)
+    """
     model.to(device1)
 
     since = time.time()
@@ -602,12 +657,12 @@ def train_model(model, model_name, dataloaders, image_datasets, criterion, optim
         model.train()
         phase = 'train'
         print('lr {}'.format(scheduler.get_last_lr()))
+        
+        # Training loop
         for batch_id, (inputs, labels) in enumerate(dataloaders[phase]):
-
             inputs, labels = inputs.to(device1), labels.to(device1)
 
             with torch.autograd.set_grad_enabled(True):
-                
                 outputs = model(inputs)
                 loss = criterion(outputs, labels)
                 _, preds = torch.max(outputs, 1)
@@ -617,7 +672,8 @@ def train_model(model, model_name, dataloaders, image_datasets, criterion, optim
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds.view(-1) == labels.view(-1)).item()
 
-            if batch_id % log_interval == 0: #Remove log interval
+            # Log training progress periodically
+            if batch_id % log_interval == 0:
                 print("Train Epoch: {} [{}/{} ({:0f}%)]\tLoss: {:.6f}\tAcc: {}/{}".format(
                     epoch,
                     batch_id * batch_size,
@@ -630,15 +686,20 @@ def train_model(model, model_name, dataloaders, image_datasets, criterion, optim
 
         scheduler.step()
 
-        ##Log Validation Statistics
-        if (epoch % 10 == 0) | (epoch == num_epochs-1): #Remove log interval
-            val_loss, val_acc, pred_array_final, label_array_final = test_model(model, model_name, dataloaders, image_datasets, criterion, epoch, class_names, data_dir, test_samples, device1, epoch_end=True)
+        # Validation every 10 epochs or on final epoch to save computation time
+        # More frequent validation isn't needed as training is stable
+        if (epoch % 10 == 0) | (epoch == num_epochs-1):
+            val_loss, val_acc, pred_array_final, label_array_final = test_model(
+                model, model_name, dataloaders, image_datasets, criterion, epoch, 
+                class_names, data_dir, test_samples, device1, epoch_end=True
+            )
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = running_corrects / len(dataloaders[phase].dataset)
 
             val_acc_history.append(val_acc)
             train_loss_history.append(epoch_loss)
 
+            # Save best model checkpoint
             if val_acc > best_acc:
                 best_acc = val_acc
                 best_loss = val_loss
@@ -646,14 +707,9 @@ def train_model(model, model_name, dataloaders, image_datasets, criterion, optim
                 pred_array_best = pred_array_final
                 label_array_best = label_array_final
 
-                # wandb.log({'max_acc': best_acc})
-
-                # wandb.log({"conf_mat_" : wandb.plot.confusion_matrix( 
-                #     preds=np.array(pred_array_final.cpu()), y_true=np.array(label_array_final.cpu()), class_names=np.array(class_names))})
-
+                # Save predictions to CSV file
                 df = pd.DataFrame(columns=['img', 'label', 'pred'])
                 df.img = (np.array(image_datasets['val'].imgs)[:, 0])
-
                 df.pred = pred_array_best.cpu()
                 df.label = label_array_best.cpu()
                 print('Outputting csv file')
@@ -663,23 +719,57 @@ def train_model(model, model_name, dataloaders, image_datasets, criterion, optim
             print("{} Loss: {} Acc: {}".format(phase, epoch_loss, epoch_acc))
             print()
 
-            # wandb.log({'epoch_train': epoch, 'train acc': epoch_acc, 'train loss': epoch_loss, 'val acc': val_acc, 'val loss': val_loss})
-
+    # Training complete
     time_elapsed = time.time() - since
     print("Training compete in {}m   {}s".format(time_elapsed // 60, time_elapsed % 60))
     print("Best val Acc: {}".format(best_acc))
 
+    # Load best model weights
     model.load_state_dict(best_model_wts)
     return model, val_acc_history, train_loss_history, pred_array_best, label_array_best, best_loss, best_acc
 
 def voting_sum(array, class_names, device1, filter_vals=None):
+    """
+    Aggregate predictions across multiple crops using sum voting.
+    
+    Args:
+        array: Tensor of predictions from multiple crops
+        class_names: List of class names (unused in current implementation)
+        device1: PyTorch device
+        filter_vals: Optional filter values (unused)
+        
+    Returns:
+        torch.Tensor: Aggregated predictions
+    """
     array = array.to(device1)
     result = torch.sum(array, dim=1)
     max_val, pred = result.max(dim=1)
     return pred
 
+
 def test_model(model, model_name, dataloaders, image_datasets, criterion, epoch, class_names, data_dir, test_samples, device1, epoch_end=False):
+    """
+    Evaluate model performance on validation dataset.
     
+    This function runs the model in evaluation mode on the validation set,
+    handling multiple crops per image and aggregating predictions.
+    
+    Args:
+        model: PyTorch model to evaluate
+        model_name (str): Name of the model architecture
+        dataloaders (dict): Dictionary containing data loaders
+        image_datasets (dict): Dictionary containing image datasets
+        criterion: Loss function for evaluation
+        epoch (int): Current epoch number
+        class_names (list): List of printer class names
+        data_dir (str): Directory for saving outputs
+        test_samples (int): Number of crops per validation image
+        device1: PyTorch device (GPU/CPU)
+        epoch_end (bool): Whether this is end-of-epoch evaluation
+        
+    Returns:
+        tuple: (epoch_loss, epoch_acc, pred_part_array, label_part_array)
+    """
     model.to(device1)
 
     running_loss = 0.
@@ -694,31 +784,30 @@ def test_model(model, model_name, dataloaders, image_datasets, criterion, epoch,
     softmax = nn.Softmax(dim=1)
     CELoss = nn.CrossEntropyLoss()
 
-    print('Testing model')  
+    print('Testing model')
 
-    for batch_id, (inputs, labels) in enumerate(dataloaders['val']):    #Added this line to evaluate model performance for multiple batches
-    #for inputs, labels in dataloaders['val']:
+    # Process validation batches
+    for batch_id, (inputs, labels) in enumerate(dataloaders['val']):
         inputs, labels = inputs.to(device1), labels.to(device1)
         inputs = inputs.squeeze()
         inputs = inputs.view(-1, 3, 448, 448)
 
+        # Repeat labels for multiple crops per image
         if test_samples > 1:
             labels = (np.repeat(np.array(labels.cpu()), test_samples))
         labels = torch.Tensor(labels).to(device1).long()
-        
 
         with torch.autograd.set_grad_enabled(False):
-
             outputs = model(inputs)
             loss = criterion(outputs, labels)
             outputs = softmax(outputs)
-                
+
         _, preds = torch.max(outputs, 1)
         running_loss += loss.item() * (inputs.size(0) / test_samples)
-        
         running_corrects += int(torch.sum(preds.view(-1) == labels.view(-1)).detach().cpu().numpy()) // test_samples
-        
-        if batch_id % 5 == 0: #Remove log interval
+
+        # Log progress every 5 batches to monitor progress without overwhelming output
+        if batch_id % 5 == 0:
             samples_processed = (batch_id + 1) * (inputs.size(0) // test_samples)
             print("Test Epoch: {} [{}/{} ({:.1f}%)]\tLoss: {:.6f}\tPatch Acc: {}/{}".format(
                 epoch,
@@ -730,32 +819,30 @@ def test_model(model, model_name, dataloaders, image_datasets, criterion, epoch,
                 samples_processed
             ))
 
+        # Accumulate predictions and labels
         pred_array = torch.cat((pred_array, preds.view(-1)), 0)
         label_array = torch.cat((label_array, labels.view(-1)), 0)
         output_array = torch.cat((output_array, outputs.view(-1)), 0)
 
-    
+    # Aggregate predictions across crops using voting
     pred_img_array = pred_array.view(-1, test_samples)
     label_img_array = label_array.view(-1, test_samples)
     output_img_array = output_array.view(-1, test_samples, len(class_names))
-    
-    
 
+    # Use sum voting to aggregate predictions
     pred_img_array_mode = voting_sum(output_img_array, class_names, device1).to(device1)
     label_img_array_mode, _ = torch.mode(label_img_array, 1)
     label_img_array_mode = label_img_array_mode.to(device1)
-    
+
+    # Calculate final accuracy
     running_corrects += torch.sum(pred_img_array_mode == label_img_array_mode).detach().cpu().numpy()
     pred_part_array = torch.cat((pred_part_array, pred_img_array_mode), 0)
     label_part_array = torch.cat((label_part_array, label_img_array_mode), 0)
 
     epoch_loss = running_loss / len(dataloaders['val'].dataset)
-
-    # epoch_acc = np.sqrt((running_corrects))
     epoch_acc = (running_corrects) / len(dataloaders['val'].dataset)
+    
     print('Full Part Accuracy: {}'.format(epoch_acc))
-
-    # wandb.log({'full_acc': epoch_acc})
 
     time_elapsed = time.time() - since
     print("Training compete in {}m   {}s".format(time_elapsed // 60, time_elapsed % 60))

@@ -1,0 +1,28 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyTorch model files
+*.pth
+*.pt
+
+# Data and model directories
+data/
+models/
+
+# Results and output files
+*.txt
+*.csv
+csv_outputs.csv
+
+# Environment files
+.env
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
